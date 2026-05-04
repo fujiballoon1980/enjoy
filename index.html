@@ -67,7 +67,7 @@
         <p id="msgText" class="mb-8 text-slate-400">Tap to start your mission</p>
         <button id="restartBtn" class="w-full bg-blue-500 hover:bg-blue-400 text-white font-black py-4 px-8 rounded-xl transition-all active:scale-95 shadow-lg shadow-blue-500/50">
             START GAME
-        </div>
+        </button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -166,13 +166,18 @@
             paddle.x = targetX;
         }
 
+        // iPhone/Android タッチイベントの修正
         canvas.addEventListener('touchmove', (e) => {
             e.preventDefault();
-            movePaddle(e.touches.clientX);
+            if (e.touches && e.touches.length > 0) {
+                movePaddle(e.touches.clientX);
+            }
         }, { passive: false });
 
         canvas.addEventListener('touchstart', (e) => {
-            movePaddle(e.touches.clientX);
+            if (e.touches && e.touches.length > 0) {
+                movePaddle(e.touches.clientX);
+            }
         }, { passive: false });
 
         canvas.addEventListener('mousemove', (e) => {
@@ -249,7 +254,6 @@
 
         // --- Game Logic ---
         function collision() {
-            // Brick collision
             for(let c=0; c<brickConfig.cols; c++) {
                 for(let r=0; r<brickConfig.rows; r++) {
                     let b = bricks[c][r];
@@ -264,7 +268,6 @@
                             spawnExplosion(b.x + b.width/2, b.y + b.height/2, b.color);
                             shakeTime = 5;
 
-                            // Item Drop Chance (15%)
                             if(Math.random() < 0.15) {
                                 items.push(new PowerItem(b.x + b.width/2 - 15, b.y));
                             }
@@ -277,7 +280,6 @@
                 }
             }
 
-            // Item collision
             items.forEach((item, index) => {
                 if(item.x < paddle.x + paddle.width && item.x + item.width > paddle.x &&
                    item.y < paddle.y + paddle.height && item.y + item.height > paddle.y) {
@@ -325,7 +327,6 @@
             ball.x += ball.dx;
             ball.y += ball.dy;
 
-            // Walls
             if(ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) {
                 ball.dx = -ball.dx;
                 spawnExplosion(ball.x, ball.y, '#ffffff66', 3);
@@ -351,7 +352,6 @@
 
             collision();
 
-            // Timers & FX
             if(shakeTime > 0) shakeTime--;
             if(paddle.glow > 0) paddle.glow--;
             
@@ -375,22 +375,18 @@
             items.forEach(it => it.update());
         }
 
-        // --- Drawing ---
         function draw() {
             ctx.save();
-            // Screen Shake
             if(shakeTime > 0) {
                 ctx.translate((Math.random()-0.5)*shakeTime, (Math.random()-0.5)*shakeTime);
             }
 
-            // BG
             const bgGrad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 0, canvas.width/2, canvas.height/2, canvas.height);
             bgGrad.addColorStop(0, '#0f172a');
             bgGrad.addColorStop(1, '#020617');
             ctx.fillStyle = bgGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Bricks
             bricks.forEach(col => col.forEach(b => {
                 if(b.status === 1) {
                     ctx.shadowBlur = 8;
@@ -399,16 +395,13 @@
                     ctx.beginPath();
                     ctx.roundRect(b.x, b.y, b.width, b.height, 6);
                     ctx.fill();
-                    // Highlight
                     ctx.fillStyle = 'rgba(255,255,255,0.2)';
                     ctx.fillRect(b.x, b.y, b.width, 4);
                 }
             }));
 
-            // Items
             items.forEach(it => it.draw());
 
-            // Paddle
             ctx.shadowBlur = paddle.glow;
             ctx.shadowColor = paddle.color;
             ctx.fillStyle = paddle.color;
@@ -416,7 +409,6 @@
             ctx.roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 8);
             ctx.fill();
 
-            // Ball
             ctx.shadowBlur = ball.isPiercing ? 15 : 5;
             ctx.shadowColor = ball.color;
             ctx.fillStyle = ball.color;
@@ -424,7 +416,6 @@
             ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
             ctx.fill();
 
-            // Particles
             particles.forEach(p => p.draw());
 
             ctx.restore();
