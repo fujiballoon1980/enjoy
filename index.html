@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>iPhone Touch Breakout</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f172a;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            padding: 20px;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 2rem;
+            border-radius: 1rem;
+            display: none;
+            pointer-events: auto;
+            width: 80%;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="ui-layer">
+        <div>SCORE: <span id="scoreDisplay">0</span></div>
+        <div>LIVES: <span id="livesDisplay">3</span></div>
+    </div>
+
+    <div id="message">
+        <h2 id="msgTitle" class="text-2xl mb-4 font-bold">GAME OVER</h2>
+        <p id="msgText" class="mb-6">もう一度挑戦しますか？</p>
+        <button id="restartBtn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-full pointer-events-auto">
+            START
+        </button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const messageBox = document.getElementById('message');
+        const msgTitle = document.getElementById('msgTitle');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // ゲーム状態
+        let score = 0;
+        let lives = 3;
+        let gameActive = false;
+        let particles = [];
+
+        // キャンバスサイズ設定
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // パドル設定
+        const paddle = {
+            width: 100,
+            height: 15,
+            x: canvas.width / 2 - 50,
+            y: canvas.height - 80,
+            color: '#38bdf8',
+            targetX: canvas.width / 2 - 50
+        };
+
+        // ボール設定
+        const ball = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            radius: 8,
+            dx: 4,
+            dy: -4,
+            speed: 5,
+            color: '#f8fafc'
+        };
+
+        // ブロック設定
+        const brickRowCount = 5;
+        const brickColumnCount = 6;
+        const brickPadding = 10;
+        const brickOffsetTop = 80;
+        const brickOffsetLeft = 20;
+        let bricks = [];
+
+        function initBricks() {
+            const totalPadding = brickPadding * (brickColumnCount - 1);
+            const availableWidth = canvas.width - (brickOffsetLeft * 2) - totalPadding;
+            const brickWidth = availableWidth / brickColumnCount;
+            
+            bricks = [];
+            for(let c=0; c<brickColumnCount; c++) {
+                bricks[c] = [];
+                for(let r=0; r<brickRowCount; r++) {
+                    bricks[c][r] = { 
+                        x: 0, 
+                        y: 0, 
+                        status: 1, 
+                        color: `hsl(${(r * 40 + 200) % 360}, 70%, 60%)` 
+                    };
+                }
+            }
+        }
+
+        // タッチ操作
+        canvas.addEventListener('touchmove', (e) => {
+            if (!gameActive) return;
+            e.preventDefault();
+            const touch = e.touches;
+            paddle.x = touch.clientX - paddle.width / 2;
+            
+            // 画面外防止
+            if(paddle.x < 0) paddle.x = 0;
+            if(paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+        }, { passive: false });
+
+        // マウス操作（PC確認用）
+        canvas.addEventListener('mousemove', (e) => {
+            if (!gameActive) return;
+            paddle.x = e.clientX - paddle.width / 2;
+        });
+
+        // パーティクル（エフェクト）
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.size = Math.random() * 5 + 2;
+                this.speedX = Math.random() * 6 - 3;
+                this.speedY = Math.random() * 6 - 3;
+                this.life = 1;
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= 0.02;
+            }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.life;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function createExplosion(x, y, color) {
+            for(let i = 0; i < 10; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function collisionDetection() {
+            const brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickPadding * (brickColumnCount - 1))) / brickColumnCount;
+            const brickHeight = 25;
+
+            for(let c=0; c<brickColumnCount; c++) {
+                for(let r=0; r<brickRowCount; r++) {
+                    let b = bricks[c][r];
+                    if(b.status === 1) {
+                        if(ball.x > b.x && ball.x < b.x + brickWidth && ball.y > b.y && ball.y < b.y + brickHeight) {
+                            ball.dy = -ball.dy;
+                            b.status = 0;
+                            score += 10;
+                            scoreDisplay.textContent = score;
+                            createExplosion(b.x + brickWidth/2, b.y + brickHeight/2, b.color);
+                            
+                            // クリア判定
+                            if(score === brickRowCount * brickColumnCount * 10) {
+                                endGame("CLEAR! ✨", "お見事！すべてのブロックを壊しました。");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
+            ctx.fillStyle = ball.color;
+            ctx.fill();
+            ctx.closePath();
+            
+            // 軌跡エフェクト
+            ctx.beginPath();
+            ctx.arc(ball.x - ball.dx, ball.y - ball.dy, ball.radius * 0.8, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 8);
+            ctx.fillStyle = paddle.color;
+            ctx.fill();
+            
+            // パドルの光沢
+            ctx.beginPath();
+            ctx.roundRect(paddle.x + 5, paddle.y + 3, paddle.width - 10, 4, 2);
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawBricks() {
+            const brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickPadding * (brickColumnCount - 1))) / brickColumnCount;
+            const brickHeight = 25;
+
+            for(let c=0; c<brickColumnCount; c++) {
+                for(let r=0; r<brickRowCount; r++) {
+                    if(bricks[c][r].status === 1) {
+                        let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
+                        let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
+                        bricks[c][r].x = brickX;
+                        bricks[c][r].y = brickY;
+                        
+                        ctx.beginPath();
+                        ctx.roundRect(brickX, brickY, brickWidth, brickHeight, 4);
+                        ctx.fillStyle = bricks[c][r].color;
+                        ctx.fill();
+                        ctx.closePath();
+                    }
+                }
+            }
+        }
+
+        function update() {
+            if(!gameActive) return;
+
+            // ボールの移動
+            ball.x += ball.dx;
+            ball.y += ball.dy;
+
+            // 壁との衝突
+            if(ball.x + ball.dx > canvas.width - ball.radius || ball.x + ball.dx < ball.radius) {
+                ball.dx = -ball.dx;
+            }
+            if(ball.y + ball.dy < ball.radius) {
+                ball.dy = -ball.dy;
+            } else if(ball.y + ball.dy > paddle.y - ball.radius) {
+                // パドルとの衝突
+                if(ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
+                    // 当たった場所によって角度を変える
+                    let hitPoint = (ball.x - (paddle.x + paddle.width/2)) / (paddle.width/2);
+                    ball.dx = hitPoint * 5;
+                    ball.dy = -ball.speed;
+                } else if(ball.y > canvas.height) {
+                    // ミス
+                    lives--;
+                    livesDisplay.textContent = lives;
+                    if(!lives) {
+                        endGame("GAME OVER", "次はもっとうまくいくはず！");
+                    } else {
+                        resetBall();
+                    }
+                }
+            }
+
+            collisionDetection();
+            
+            // パーティクルの更新
+            particles = particles.filter(p => p.life > 0);
+            particles.forEach(p => p.update());
+        }
+
+        function resetBall() {
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height - 100;
+            ball.dx = 4;
+            ball.dy = -4;
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 背景のグラデーション
+            const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            grad.addColorStop(0, '#0f172a');
+            grad.addColorStop(1, '#1e293b');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawBricks();
+            drawBall();
+            drawPaddle();
+            particles.forEach(p => p.draw());
+
+            update();
+            requestAnimationFrame(draw);
+        }
+
+        function startGame() {
+            score = 0;
+            lives = 3;
+            scoreDisplay.textContent = score;
+            livesDisplay.textContent = lives;
+            initBricks();
+            resetBall();
+            gameActive = true;
+            messageBox.style.display = 'none';
+        }
+
+        function endGame(title, text) {
+            gameActive = false;
+            msgTitle.textContent = title;
+            document.getElementById('msgText').textContent = text;
+            restartBtn.textContent = "RETRY";
+            messageBox.style.display = 'block';
+        }
+
+        restartBtn.addEventListener('click', startGame);
+
+        // 初期表示
+        initBricks();
+        msgTitle.textContent = "BREAKOUT";
+        document.getElementById('msgText').textContent = "パドルを動かしてブロックを壊そう！";
+        restartBtn.textContent = "GAME START";
+        messageBox.style.display = 'block';
+        
+        draw();
+    </script>
+</body>
+</html>
