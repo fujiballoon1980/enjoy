@@ -3,15 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>iPhone Touch Breakout</title>
+    <title>Super Breakout Mobile</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background-color: #0f172a;
+            background-color: #020617;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             touch-action: none;
+            user-select: none;
         }
         canvas {
             display: block;
@@ -23,13 +24,14 @@
             left: 0;
             width: 100%;
             pointer-events: none;
-            padding: 20px;
+            padding: env(safe-area-inset-top, 20px) 20px 20px 20px;
             color: white;
             display: flex;
             justify-content: space-between;
-            font-size: 20px;
-            font-weight: bold;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            font-size: 18px;
+            font-weight: 800;
+            text-shadow: 0 0 10px rgba(0,0,0,0.8);
+            z-index: 10;
         }
         #message {
             position: absolute;
@@ -38,28 +40,34 @@
             transform: translate(-50%, -50%);
             text-align: center;
             color: white;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 2rem;
-            border-radius: 1rem;
+            background: rgba(15, 23, 42, 0.95);
+            padding: 2.5rem 1.5rem;
+            border-radius: 1.5rem;
             display: none;
             pointer-events: auto;
-            width: 80%;
-            max-width: 300px;
+            width: 85%;
+            max-width: 350px;
+            border: 2px solid #38bdf8;
+            box-shadow: 0 0 30px rgba(56, 189, 248, 0.3);
+            z-index: 100;
+        }
+        .stats-val {
+            color: #38bdf8;
         }
     </style>
 </head>
 <body>
     <div class="ui-layer">
-        <div>SCORE: <span id="scoreDisplay">0</span></div>
-        <div>LIVES: <span id="livesDisplay">3</span></div>
+        <div>SCORE: <span id="scoreDisplay" class="stats-val">0</span></div>
+        <div>LIVES: <span id="livesDisplay" class="stats-val">3</span></div>
     </div>
 
     <div id="message">
-        <h2 id="msgTitle" class="text-2xl mb-4 font-bold">GAME OVER</h2>
-        <p id="msgText" class="mb-6">もう一度挑戦しますか？</p>
-        <button id="restartBtn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-full pointer-events-auto">
-            START
-        </button>
+        <h2 id="msgTitle" class="text-3xl mb-2 font-black tracking-tighter">SUPER BREAKOUT</h2>
+        <p id="msgText" class="mb-8 text-slate-400">Tap to start your mission</p>
+        <button id="restartBtn" class="w-full bg-blue-500 hover:bg-blue-400 text-white font-black py-4 px-8 rounded-xl transition-all active:scale-95 shadow-lg shadow-blue-500/50">
+            START GAME
+        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -73,255 +81,353 @@
         const msgTitle = document.getElementById('msgTitle');
         const restartBtn = document.getElementById('restartBtn');
 
-        // ゲーム状態
+        // --- Game State ---
         let score = 0;
         let lives = 3;
         let gameActive = false;
         let particles = [];
+        let items = [];
+        let shakeTime = 0;
+        let frameCount = 0;
 
-        // キャンバスサイズ設定
+        // --- Constants & Config ---
+        const BALL_SPEED_START = 5;
+        const PADDLE_WIDTH_START = 100;
+
+        // --- Objects ---
+        const paddle = {
+            width: PADDLE_WIDTH_START,
+            height: 16,
+            x: 0,
+            y: 0,
+            color: '#38bdf8',
+            glow: 0,
+            powerUpTimer: 0
+        };
+
+        const ball = {
+            x: 0,
+            y: 0,
+            radius: 8,
+            dx: 0,
+            dy: 0,
+            speed: BALL_SPEED_START,
+            color: '#ffffff',
+            isPiercing: false,
+            pierceTimer: 0
+        };
+
+        const brickConfig = {
+            rows: 6,
+            cols: 6,
+            padding: 8,
+            offsetTop: 100,
+            offsetLeft: 15
+        };
+        let bricks = [];
+
+        // --- Initialization ---
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            paddle.y = canvas.height - 120;
+            paddle.x = (canvas.width - paddle.width) / 2;
+            initBricks();
         }
         window.addEventListener('resize', resize);
-        resize();
-
-        // パドル設定
-        const paddle = {
-            width: 100,
-            height: 15,
-            x: canvas.width / 2 - 50,
-            y: canvas.height - 80,
-            color: '#38bdf8',
-            targetX: canvas.width / 2 - 50
-        };
-
-        // ボール設定
-        const ball = {
-            x: canvas.width / 2,
-            y: canvas.height - 100,
-            radius: 8,
-            dx: 4,
-            dy: -4,
-            speed: 5,
-            color: '#f8fafc'
-        };
-
-        // ブロック設定
-        const brickRowCount = 5;
-        const brickColumnCount = 6;
-        const brickPadding = 10;
-        const brickOffsetTop = 80;
-        const brickOffsetLeft = 20;
-        let bricks = [];
 
         function initBricks() {
-            const totalPadding = brickPadding * (brickColumnCount - 1);
-            const availableWidth = canvas.width - (brickOffsetLeft * 2) - totalPadding;
-            const brickWidth = availableWidth / brickColumnCount;
-            
+            const availableWidth = canvas.width - (brickConfig.offsetLeft * 2);
+            const brickWidth = (availableWidth - (brickConfig.padding * (brickConfig.cols - 1))) / brickConfig.cols;
+            const brickHeight = 24;
+
             bricks = [];
-            for(let c=0; c<brickColumnCount; c++) {
+            for(let c=0; c<brickConfig.cols; c++) {
                 bricks[c] = [];
-                for(let r=0; r<brickRowCount; r++) {
+                for(let r=0; r<brickConfig.rows; r++) {
                     bricks[c][r] = { 
-                        x: 0, 
-                        y: 0, 
+                        x: (c * (brickWidth + brickConfig.padding)) + brickConfig.offsetLeft, 
+                        y: (r * (brickHeight + brickConfig.padding)) + brickConfig.offsetTop, 
+                        width: brickWidth,
+                        height: brickHeight,
                         status: 1, 
-                        color: `hsl(${(r * 40 + 200) % 360}, 70%, 60%)` 
+                        color: `hsl(${(r * 30 + 190) % 360}, 70%, 55%)` 
                     };
                 }
             }
         }
 
-        // タッチ操作
-        canvas.addEventListener('touchmove', (e) => {
+        // --- Input Handling ---
+        function movePaddle(clientX) {
             if (!gameActive) return;
+            let targetX = clientX - paddle.width / 2;
+            if(targetX < 0) targetX = 0;
+            if(targetX + paddle.width > canvas.width) targetX = canvas.width - paddle.width;
+            paddle.x = targetX;
+        }
+
+        canvas.addEventListener('touchmove', (e) => {
             e.preventDefault();
-            const touch = e.touches;
-            paddle.x = touch.clientX - paddle.width / 2;
-            
-            // 画面外防止
-            if(paddle.x < 0) paddle.x = 0;
-            if(paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+            movePaddle(e.touches.clientX);
         }, { passive: false });
 
-        // マウス操作（PC確認用）
+        canvas.addEventListener('touchstart', (e) => {
+            movePaddle(e.touches.clientX);
+        }, { passive: false });
+
         canvas.addEventListener('mousemove', (e) => {
-            if (!gameActive) return;
-            paddle.x = e.clientX - paddle.width / 2;
+            movePaddle(e.clientX);
         });
 
-        // パーティクル（エフェクト）
+        // --- FX Systems ---
         class Particle {
-            constructor(x, y, color) {
+            constructor(x, y, color, speedScale = 1) {
                 this.x = x;
                 this.y = y;
                 this.color = color;
-                this.size = Math.random() * 5 + 2;
-                this.speedX = Math.random() * 6 - 3;
-                this.speedY = Math.random() * 6 - 3;
-                this.life = 1;
+                this.radius = Math.random() * 3 + 1;
+                this.vx = (Math.random() - 0.5) * 8 * speedScale;
+                this.vy = (Math.random() - 0.5) * 8 * speedScale;
+                this.life = 1.0;
+                this.decay = Math.random() * 0.03 + 0.02;
             }
             update() {
-                this.x += this.speedX;
-                this.y += this.speedY;
-                this.life -= 0.02;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= this.decay;
             }
             draw() {
-                ctx.fillStyle = this.color;
+                ctx.save();
                 ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.globalAlpha = 1;
+                ctx.restore();
             }
         }
 
-        function createExplosion(x, y, color) {
-            for(let i = 0; i < 10; i++) {
-                particles.push(new Particle(x, y, color));
+        function spawnExplosion(x, y, color, count = 12) {
+            for(let i=0; i<count; i++) particles.push(new Particle(x, y, color));
+        }
+
+        class PowerItem {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 30;
+                this.height = 30;
+                this.dy = 3;
+                const r = Math.random();
+                if (r < 0.33) {
+                    this.type = 'GROW'; // Blue
+                    this.color = '#38bdf8';
+                } else if (r < 0.66) {
+                    this.type = 'SLOW'; // Green
+                    this.color = '#4ade80';
+                } else {
+                    this.type = 'PIERCE'; // Yellow/Gold
+                    this.color = '#fbbf24';
+                }
+            }
+            update() { this.y += this.dy; }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height, 6);
+                ctx.fill();
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.type, this.x + 15, this.y + 22);
+                ctx.restore();
             }
         }
 
-        function collisionDetection() {
-            const brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickPadding * (brickColumnCount - 1))) / brickColumnCount;
-            const brickHeight = 25;
-
-            for(let c=0; c<brickColumnCount; c++) {
-                for(let r=0; r<brickRowCount; r++) {
+        // --- Game Logic ---
+        function collision() {
+            // Brick collision
+            for(let c=0; c<brickConfig.cols; c++) {
+                for(let r=0; r<brickConfig.rows; r++) {
                     let b = bricks[c][r];
                     if(b.status === 1) {
-                        if(ball.x > b.x && ball.x < b.x + brickWidth && ball.y > b.y && ball.y < b.y + brickHeight) {
-                            ball.dy = -ball.dy;
+                        if(ball.x + ball.radius > b.x && ball.x - ball.radius < b.x + b.width && 
+                           ball.y + ball.radius > b.y && ball.y - ball.radius < b.y + b.height) {
+                            
+                            if (!ball.isPiercing) ball.dy = -ball.dy;
                             b.status = 0;
                             score += 10;
                             scoreDisplay.textContent = score;
-                            createExplosion(b.x + brickWidth/2, b.y + brickHeight/2, b.color);
-                            
-                            // クリア判定
-                            if(score === brickRowCount * brickColumnCount * 10) {
-                                endGame("CLEAR! ✨", "お見事！すべてのブロックを壊しました。");
+                            spawnExplosion(b.x + b.width/2, b.y + b.height/2, b.color);
+                            shakeTime = 5;
+
+                            // Item Drop Chance (15%)
+                            if(Math.random() < 0.15) {
+                                items.push(new PowerItem(b.x + b.width/2 - 15, b.y));
+                            }
+
+                            if(score >= brickConfig.rows * brickConfig.cols * 10) {
+                                endGame("LEVEL CLEAR", "素晴らしいスキルです！✨");
                             }
                         }
                     }
                 }
             }
-        }
 
-        function drawBall() {
-            ctx.beginPath();
-            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
-            ctx.fillStyle = ball.color;
-            ctx.fill();
-            ctx.closePath();
-            
-            // 軌跡エフェクト
-            ctx.beginPath();
-            ctx.arc(ball.x - ball.dx, ball.y - ball.dy, ball.radius * 0.8, 0, Math.PI*2);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-            ctx.fill();
-            ctx.closePath();
-        }
-
-        function drawPaddle() {
-            ctx.beginPath();
-            ctx.roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 8);
-            ctx.fillStyle = paddle.color;
-            ctx.fill();
-            
-            // パドルの光沢
-            ctx.beginPath();
-            ctx.roundRect(paddle.x + 5, paddle.y + 3, paddle.width - 10, 4, 2);
-            ctx.fillStyle = 'rgba(255,255,255,0.3)';
-            ctx.fill();
-            ctx.closePath();
-        }
-
-        function drawBricks() {
-            const brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickPadding * (brickColumnCount - 1))) / brickColumnCount;
-            const brickHeight = 25;
-
-            for(let c=0; c<brickColumnCount; c++) {
-                for(let r=0; r<brickRowCount; r++) {
-                    if(bricks[c][r].status === 1) {
-                        let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
-                        let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
-                        bricks[c][r].x = brickX;
-                        bricks[c][r].y = brickY;
-                        
-                        ctx.beginPath();
-                        ctx.roundRect(brickX, brickY, brickWidth, brickHeight, 4);
-                        ctx.fillStyle = bricks[c][r].color;
-                        ctx.fill();
-                        ctx.closePath();
-                    }
+            // Item collision
+            items.forEach((item, index) => {
+                if(item.x < paddle.x + paddle.width && item.x + item.width > paddle.x &&
+                   item.y < paddle.y + paddle.height && item.y + item.height > paddle.y) {
+                    applyPowerUp(item.type);
+                    items.splice(index, 1);
+                    score += 50;
+                    scoreDisplay.textContent = score;
+                } else if(item.y > canvas.height) {
+                    items.splice(index, 1);
                 }
+            });
+        }
+
+        function applyPowerUp(type) {
+            paddle.glow = 20;
+            if(type === 'GROW') {
+                paddle.width = 180;
+                paddle.powerUpTimer = 400;
+            } else if(type === 'SLOW') {
+                ball.speed = 3.5;
+                const angle = Math.atan2(ball.dy, ball.dx);
+                ball.dx = Math.cos(angle) * ball.speed;
+                ball.dy = Math.sin(angle) * ball.speed;
+                setTimeout(() => { ball.speed = BALL_SPEED_START; }, 6000);
+            } else if(type === 'PIERCE') {
+                ball.isPiercing = true;
+                ball.pierceTimer = 300;
+                ball.color = '#fbbf24';
             }
+        }
+
+        function resetBall() {
+            ball.x = canvas.width / 2;
+            ball.y = paddle.y - 30;
+            ball.speed = BALL_SPEED_START;
+            ball.dx = 4;
+            ball.dy = -4;
+            ball.isPiercing = false;
+            ball.color = '#ffffff';
         }
 
         function update() {
             if(!gameActive) return;
 
-            // ボールの移動
             ball.x += ball.dx;
             ball.y += ball.dy;
 
-            // 壁との衝突
-            if(ball.x + ball.dx > canvas.width - ball.radius || ball.x + ball.dx < ball.radius) {
+            // Walls
+            if(ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) {
                 ball.dx = -ball.dx;
+                spawnExplosion(ball.x, ball.y, '#ffffff66', 3);
             }
-            if(ball.y + ball.dy < ball.radius) {
+            if(ball.y - ball.radius < 0) {
                 ball.dy = -ball.dy;
-            } else if(ball.y + ball.dy > paddle.y - ball.radius) {
-                // パドルとの衝突
+                spawnExplosion(ball.x, ball.y, '#ffffff66', 3);
+            } else if(ball.y + ball.radius > paddle.y) {
                 if(ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
-                    // 当たった場所によって角度を変える
                     let hitPoint = (ball.x - (paddle.x + paddle.width/2)) / (paddle.width/2);
-                    ball.dx = hitPoint * 5;
-                    ball.dy = -ball.speed;
+                    ball.dx = hitPoint * ball.speed;
+                    ball.dy = -Math.sqrt(Math.abs(ball.speed**2 - ball.dx**2));
+                    paddle.glow = 15;
+                    shakeTime = 3;
                 } else if(ball.y > canvas.height) {
-                    // ミス
                     lives--;
                     livesDisplay.textContent = lives;
-                    if(!lives) {
-                        endGame("GAME OVER", "次はもっとうまくいくはず！");
-                    } else {
-                        resetBall();
-                    }
+                    shakeTime = 15;
+                    if(lives <= 0) endGame("GAME OVER", "再挑戦して記録を更新しよう！");
+                    else resetBall();
                 }
             }
 
-            collisionDetection();
+            collision();
+
+            // Timers & FX
+            if(shakeTime > 0) shakeTime--;
+            if(paddle.glow > 0) paddle.glow--;
             
-            // パーティクルの更新
-            particles = particles.filter(p => p.life > 0);
-            particles.forEach(p => p.update());
+            if(paddle.powerUpTimer > 0) {
+                paddle.powerUpTimer--;
+                if(paddle.powerUpTimer === 0) paddle.width = PADDLE_WIDTH_START;
+            }
+
+            if(ball.pierceTimer > 0) {
+                ball.pierceTimer--;
+                if(ball.pierceTimer === 0) {
+                    ball.isPiercing = false;
+                    ball.color = '#ffffff';
+                }
+            }
+
+            particles.forEach((p, i) => {
+                p.update();
+                if(p.life <= 0) particles.splice(i, 1);
+            });
+            items.forEach(it => it.update());
         }
 
-        function resetBall() {
-            ball.x = canvas.width / 2;
-            ball.y = canvas.height - 100;
-            ball.dx = 4;
-            ball.dy = -4;
-        }
-
+        // --- Drawing ---
         function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // 背景のグラデーション
-            const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            grad.addColorStop(0, '#0f172a');
-            grad.addColorStop(1, '#1e293b');
-            ctx.fillStyle = grad;
+            ctx.save();
+            // Screen Shake
+            if(shakeTime > 0) {
+                ctx.translate((Math.random()-0.5)*shakeTime, (Math.random()-0.5)*shakeTime);
+            }
+
+            // BG
+            const bgGrad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 0, canvas.width/2, canvas.height/2, canvas.height);
+            bgGrad.addColorStop(0, '#0f172a');
+            bgGrad.addColorStop(1, '#020617');
+            ctx.fillStyle = bgGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            drawBricks();
-            drawBall();
-            drawPaddle();
+            // Bricks
+            bricks.forEach(col => col.forEach(b => {
+                if(b.status === 1) {
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = b.color;
+                    ctx.fillStyle = b.color;
+                    ctx.beginPath();
+                    ctx.roundRect(b.x, b.y, b.width, b.height, 6);
+                    ctx.fill();
+                    // Highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.fillRect(b.x, b.y, b.width, 4);
+                }
+            }));
+
+            // Items
+            items.forEach(it => it.draw());
+
+            // Paddle
+            ctx.shadowBlur = paddle.glow;
+            ctx.shadowColor = paddle.color;
+            ctx.fillStyle = paddle.color;
+            ctx.beginPath();
+            ctx.roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 8);
+            ctx.fill();
+
+            // Ball
+            ctx.shadowBlur = ball.isPiercing ? 15 : 5;
+            ctx.shadowColor = ball.color;
+            ctx.fillStyle = ball.color;
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
+            ctx.fill();
+
+            // Particles
             particles.forEach(p => p.draw());
 
+            ctx.restore();
             update();
             requestAnimationFrame(draw);
         }
@@ -331,8 +437,11 @@
             lives = 3;
             scoreDisplay.textContent = score;
             livesDisplay.textContent = lives;
+            paddle.width = PADDLE_WIDTH_START;
             initBricks();
             resetBall();
+            items = [];
+            particles = [];
             gameActive = true;
             messageBox.style.display = 'none';
         }
@@ -341,19 +450,12 @@
             gameActive = false;
             msgTitle.textContent = title;
             document.getElementById('msgText').textContent = text;
-            restartBtn.textContent = "RETRY";
+            restartBtn.textContent = "PLAY AGAIN";
             messageBox.style.display = 'block';
         }
 
         restartBtn.addEventListener('click', startGame);
-
-        // 初期表示
-        initBricks();
-        msgTitle.textContent = "BREAKOUT";
-        document.getElementById('msgText').textContent = "パドルを動かしてブロックを壊そう！";
-        restartBtn.textContent = "GAME START";
-        messageBox.style.display = 'block';
-        
+        resize();
         draw();
     </script>
 </body>
